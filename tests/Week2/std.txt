@@ -1,0 +1,26 @@
+https://docs.junit.org/6.0.2/writing-tests/intro.html
+
+Annotations
+-------------
+@Test
+@RepeatedTest
+@BeforeAll
+@DisplayName
+
+Methods
+--------------
+assertEquals(...)
+assertThrows(...)
+
+LabWork :
+
+Write a function that converts a given integer number to a binary string.
+Write necessary if-else etc., clauses to detect possible errors and return an error to a suitable error string.
+Example Error Strings: "Negative Number" "Object Type Exception," etc.
+
+public static String toBinaryString(Object input){
+    ....
+}
+
+Test your functions by writing manual tests and using "@RepeatedTest" annotation.
+Hint: you can use Integer.toBinaryString(int value) for the correctness of repeated tests.
