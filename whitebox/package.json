@@ -1,0 +1,8 @@
+{
+  "name": "whitebox",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "npm start --prefix Library-DB-Express",
+    "install": "npm install --prefix Library-DB-Express"
+  }
+}
