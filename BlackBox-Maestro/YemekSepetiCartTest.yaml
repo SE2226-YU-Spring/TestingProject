@@ -1,0 +1,31 @@
+appId: com.inovel.app.yemeksepeti
+---
+- launchApp
+
+- tapOn:
+    id: "HomeSearchBar" 
+
+- inputText: "universite 2"
+
+- tapOn:
+    id: AUTOCOMPLETE_SUGGESTION_ENTRY
+- tapOn:
+    id: IMAGE
+
+- scrollUntilVisible:
+    element:
+      text: Efsane
+- tapOn:
+    text: ürün ürününü 1 adet artır
+    index: 2
+- tapOn: Sepete Git
+- assertVisible: 210,00 TL
+- tapOn: ürün ürününü 1 adet artır
+- assertVisible: 420,00 TL
+- tapOn: ürün ürününü 1 adet azalt
+- assertVisible: 210,00 TL
+- tapOn: ürün ürününü sepetten kaldır
+- assertVisible:
+    id: category_name
+
+
