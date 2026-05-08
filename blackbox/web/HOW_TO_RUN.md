@@ -87,6 +87,9 @@ DISPLAY=:1 mvn -B -Dtest=YemekSepetiCartTest#cartAddIncrementDecrementRemove tes
 | `-Dchannel=chromium` | Fall back to Playwright's bundled Chromium instead of system Chrome. **Will hit captchas more often** — use only if `google-chrome` is missing. | `chrome` |
 | `-DuseRealProfile=true` | Use your actual `~/.config/google-chrome/Default` profile instead of `target/chrome-profile/`. Bypasses PerimeterX outright because your real cookies are already cleared. **Requires that you fully close your normal Chrome before running.** | `false` |
 | `-DextensionPaths=<dir1>,<dir2>` | Override which Chrome extensions to load. Default auto-discovers Buster, NopeCHA, etc. from your normal profile. | (auto) |
+| `-DconnectCDP=false` | **Default is `true` for ALL tests.** Launch real Chrome with `--remote-debugging-port` and your installed extensions live (Buster captcha solver, etc.), then attach Playwright via CDP. Pass `-DconnectCDP=false` only to fall back to Playwright's launched Chromium, which silently disables real extensions under Chrome's automation policy. | `true` |
+| `-DcdpPort=9223` | Port the CDP-attached Chrome listens on. Change only if 9223 is in use. | `9223` |
+| `-DchromeBinary=/path/to/chrome` | Override the Chrome binary used by `connectCDP`. Auto-resolved from the usual paths (`/usr/bin/google-chrome-stable`, `/usr/bin/google-chrome`, `/snap/bin/chromium`). | (auto) |
 
 Examples:
 
@@ -96,7 +99,65 @@ DISPLAY=:1 mvn -B -DuseRealProfile=true test
 
 # Give yourself 10 minutes to solve a captcha if one pops up
 DISPLAY=:1 mvn -B -DcaptchaTimeoutMs=600000 test
+
+# CDP + real Chrome + extensions is the DEFAULT for every test class —
+# Search/Login/Pay/Cart all run with Buster (or whatever solver you have
+# installed) live. Profile lives in target/chrome-profile-cdp/, separate
+# from your normal Chrome session. Extensions auto-discovered from
+# ~/.config/google-chrome/Default/Extensions/.
+DISPLAY=:1 mvn -B -Dtest=YemekSepetiCartTest test     # CDP is on by default
+
+# To disable CDP and fall back to Playwright-launched Chromium:
+DISPLAY=:1 mvn -B -DconnectCDP=false test
 ```
+
+### Captcha auto-click
+
+When a captcha appears mid-test the harness now auto-clicks the challenge
+so the installed solver extension takes over:
+
+- **PerimeterX "Press & Hold"** — the harness moves the mouse onto the
+  button and holds the left button down for ~12 s, then releases. If the
+  challenge persists, it re-presses every ~20 s.
+- **Google reCAPTCHA "Ben robot değilim"** — the harness clicks the
+  checkbox inside the iframe; Buster picks up the audio challenge from
+  there.
+
+You no longer need to be at the keyboard for normal challenges. If neither
+known challenge is detected (a new variant), the harness falls back to
+polling and you can solve manually in the open browser.
+
+### Why CDP-attached Chrome is the default
+
+Playwright's `launchPersistentContext` puts the launched Chrome under an automation policy that **silently disables most extensions**, even with `--load-extension`. Buster (and other captcha solvers) is the most common casualty: it appears in `chrome://extensions` but never runs. CDP-attach sidesteps the policy: we launch Chrome ourselves outside Playwright's harness, so extensions load and run as if a human had opened the browser, but we still drive the page from Java via the DevTools socket. Every test class benefits — Search/Login/Pay all hit PerimeterX challenges occasionally, not just the cart flow — so CDP is now on by default. Pass `-DconnectCDP=false` only if you specifically need the Playwright-launched Chromium path.
+
+### One-time manual setup for the cart tests
+
+Add-to-cart on yemeksepeti.com requires (a) a logged-in account and (b) a confirmed delivery address. Both are gated behind flows that don't reliably automate (Google OAuth pop-ups, phone verification, address autocomplete). The fix is to do those once, manually, against the same Chrome profile the tests will reuse:
+
+```bash
+cd blackbox/web
+./setup-cart-profile.sh        # opens Chrome on target/chrome-profile-cdp/
+```
+
+In the Chrome window:
+1. Solve any "Press & Hold" / captcha if shown.
+2. Click **Giriş Yap** → **Google ile devam et** → pick your account. Complete any phone-verification step Yemeksepeti asks for.
+3. Click the address bar at the top, type your area (e.g. *"Üniversite 2"*), pick the suggestion, click **Bu Adresi Kullan**.
+4. Open one restaurant and verify you can add an item to the cart — that proves the session is wired end-to-end.
+5. Close Chrome (File → Quit, **not** just the tab).
+
+After this, the automated cart test reuses your session:
+
+```bash
+DISPLAY=:1 mvn -B -DconnectCDP=true -Dtest=YemekSepetiCartTest test
+```
+
+`ensureLoggedInWithGoogle()` and `selectAddress()` both short-circuit when their state is already in place — the test just exercises add → +1 → −1 → −1 → empty.
+
+**SAFETY:** the cart test never proceeds past add/decrement/remove. It will not place an order. The setup script also stops at the cart side — never click "Sepeti Onayla" / "Siparişi Tamamla" during setup either.
+
+Re-run `setup-cart-profile.sh` if the session expires (you'll know because `ensureLoggedInWithGoogle()` starts trying to drive a Google chooser again) or to switch addresses.
 
 ## What you should see
 
@@ -131,6 +192,18 @@ A captcha appeared but you weren't at the keyboard. Re-run with `-DcaptchaTimeou
 ### `[ext] loading extensions: ` (empty)
 The auto-discovery didn't find anything in `~/.config/google-chrome/Default/Extensions/`. That's OK — Buster only solves Google reCAPTCHA, not PerimeterX press-and-hold, so its absence is mostly cosmetic. Use the pre-warm or `-DuseRealProfile=true` instead.
 
+### Cart tests stuck at captcha and Buster never solves it
+You're hitting the case `-DconnectCDP=true` is for. When Playwright launches Chrome itself, Buster appears in `chrome://extensions` but its content scripts are blocked by Chrome's automation policy. Re-run with:
+
+```bash
+DISPLAY=:1 mvn -B -DconnectCDP=true -Dtest=YemekSepetiCartTest test
+```
+
+This launches Chrome via `ProcessBuilder` outside Playwright's harness, so Buster runs normally. If Buster still doesn't solve the challenge, that's because PerimeterX is using press-and-hold (not Google reCAPTCHA) — solve once, and the cookies stick for ~24 h.
+
+### `Chrome did not open --remote-debugging-port=...`
+The `-DconnectCDP=true` mode uses port 9223 by default. Either another Chrome instance has it open, or Chrome failed to launch. Check `target/chrome-cdp.log` for the actual error. To use a different port, pass `-DcdpPort=9224`.
+
 ### Browser closes immediately / `Target page, context or browser has been closed`
 You either closed the Chrome window manually, or another instance of Chrome with the same `--user-data-dir` is already running. Close all Chrome windows (`pkill chrome`) and re-run.
 
@@ -149,13 +222,16 @@ Either install Chrome (`sudo apt install -y google-chrome-stable`) or pass `-Dch
 ## Quick reference
 
 ```bash
-# 1. Pre-warm once (skip if using -DuseRealProfile=true)
+# 1. Pre-warm once (skip if using -DuseRealProfile=true or -DconnectCDP=true)
 google-chrome --user-data-dir="$(pwd)/target/chrome-profile" https://www.yemeksepeti.com/
 # Solve any captcha. Open one restaurant. Close Chrome.
 
 # 2. Run all 5 tests
 DISPLAY=:1 mvn -B test
 
-# 3. Or run a single class while iterating
+# 3. Iterate on a single class
 DISPLAY=:1 mvn -B -Dtest=YemekSepetiCartTest test
+
+# 4. CART — run with real Chrome + your captcha-solver extensions
+DISPLAY=:1 mvn -B -DconnectCDP=true -Dtest=YemekSepetiCartTest test
 ```

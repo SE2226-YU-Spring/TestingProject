@@ -2,6 +2,7 @@ package com.yemeksepeti;
 
 import com.microsoft.playwright.Locator;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 
 import java.util.regex.Pattern;
@@ -18,6 +19,7 @@ import static com.microsoft.playwright.assertions.PlaywrightAssertions.assertTha
  *  "Menüde ara" placeholder         →  [data-testid='search-input'] (placeholder "Menüde Ara")
  *  Top-bar restaurant search        →  [data-testid='new-search-input']
  */
+@Order(4)
 class YemekSepetiSearchTest extends BaseTest {
 
     @Test

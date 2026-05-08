@@ -1,5 +1,6 @@
 package com.yemeksepeti;
 
+import com.microsoft.playwright.Browser;
 import com.microsoft.playwright.BrowserContext;
 import com.microsoft.playwright.BrowserType;
 import com.microsoft.playwright.Page;
@@ -9,6 +10,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.TestInstance;
 
+import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -26,6 +28,8 @@ abstract class BaseTest {
     private static Playwright playwrightSingleton;
     private static BrowserContext contextSingleton;
     private static Page pageSingleton;
+    private static Browser cdpBrowserSingleton;
+    private static Process chromeProcessSingleton;
 
     protected Playwright playwright;
     protected BrowserContext context;
@@ -34,15 +38,262 @@ abstract class BaseTest {
     @BeforeAll
     void setUpClass() throws Exception {
         if (contextSingleton == null) {
-            initSharedBrowser();
+            // Default to CDP-attached real Chrome so installed extensions
+            // (Buster captcha solver, etc.) are actually live for every
+            // test class — Search/Login/Pay/Cart all benefit. Pass
+            // -DconnectCDP=false to fall back to Playwright's launched
+            // Chromium.
+            if (Boolean.parseBoolean(System.getProperty("connectCDP", "true"))) {
+                initCdpAttachedBrowser();
+            } else {
+                initSharedBrowser();
+            }
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 if (contextSingleton != null) try { contextSingleton.close(); } catch (Exception ignored) {}
+                if (cdpBrowserSingleton != null) try { cdpBrowserSingleton.close(); } catch (Exception ignored) {}
+                if (chromeProcessSingleton != null && chromeProcessSingleton.isAlive()) {
+                    try { chromeProcessSingleton.destroy(); } catch (Exception ignored) {}
+                }
                 if (playwrightSingleton != null) try { playwrightSingleton.close(); } catch (Exception ignored) {}
             }));
         }
         playwright = playwrightSingleton;
         context = contextSingleton;
         page = pageSingleton;
+    }
+
+    /**
+     * Auto-launch real Google Chrome under our control with the user's
+     * extensions live (Buster captcha solver, etc.) and a remote debugging
+     * port, then attach Playwright to it via CDP.
+     *
+     * Why this mode exists: when Playwright launches Chrome itself via
+     * launchPersistentContext, real installed extensions are silently
+     * disabled by Chrome's automation policy. --load-extension only
+     * loads them as "unpacked dev" extensions, which Chrome neuters for
+     * many real-world extensions (Buster being the classic one). The
+     * fix is to launch Chrome outside Playwright's harness, against a
+     * cloned copy of the user's actual profile dir — so extensions are
+     * properly installed (with their stored permissions, IDs, and
+     * background scripts), not loaded as developer-mode strangers.
+     *
+     * Activation: -DconnectCDP=true (off by default — only the cart
+     * tests need it; the other 5 tests pass without).
+     *
+     * Profile: target/chrome-profile-cdp/ (a clone of
+     * ~/.config/google-chrome/Default — Chrome refuses
+     * --remote-debugging-port on the system profile path, hence the
+     * clone). Cloning happens once on first run; pass
+     * -DrecloneProfile=true to force re-clone, or
+     * -DuserDataDir=/some/other/path to point elsewhere.
+     */
+    private void initCdpAttachedBrowser() throws Exception {
+        playwrightSingleton = Playwright.create();
+        playwright = playwrightSingleton;
+
+        int port = Integer.parseInt(System.getProperty("cdpPort", "9223"));
+        String chromeBin = System.getProperty("chromeBinary",
+                resolveChromeBinaryOrThrow());
+        Path userDataDir = Paths.get(System.getProperty(
+                "userDataDir",
+                Paths.get("target", "chrome-profile-cdp").toAbsolutePath().toString()));
+        Files.createDirectories(userDataDir);
+
+        // Clone the user's real Chrome profile (with all extensions
+        // properly installed) into the CDP dir. Without this Chrome
+        // launches with an empty profile + --load-extension dev mode,
+        // and most real extensions are silently neutered.
+        boolean reclone = Boolean.parseBoolean(System.getProperty("recloneProfile", "false"));
+        cloneRealProfileIfNeeded(userDataDir, reclone);
+
+        // Always strip stale SingletonLock/Cookie/Socket symlinks before
+        // launch — if the previous test run died or the user's normal
+        // Chrome opened on this dir, those symlinks point at a foreign PID
+        // and Chrome would silently forward our `about:blank` to that
+        // existing instance and exit ("Opening in existing browser
+        // session.") leaving us without a CDP-attached process.
+        for (String f : new String[]{"SingletonLock", "SingletonCookie", "SingletonSocket"}) {
+            Path p = userDataDir.resolve(f);
+            try { Files.deleteIfExists(p); } catch (Exception ignored) {}
+        }
+
+        // If something is already listening on the port (e.g. the user
+        // ran a helper script), skip launch and attach to that.
+        if (!isPortOpen("127.0.0.1", port)) {
+            java.util.List<String> cmd = new java.util.ArrayList<>();
+            cmd.add(chromeBin);
+            cmd.add("--remote-debugging-port=" + port);
+            cmd.add("--user-data-dir=" + userDataDir.toAbsolutePath().toString());
+            cmd.add("--profile-directory=Default");
+            cmd.add("--no-first-run");
+            cmd.add("--no-default-browser-check");
+            cmd.add("--disable-blink-features=AutomationControlled");
+            cmd.add("--disable-features=Translate,InterestFeedContentSuggestions");
+            cmd.add("--lang=tr-TR");
+            cmd.add("--window-size=1366,900");
+            cmd.add("about:blank");
+
+            System.out.println("[cdp] launching: " + String.join(" ", cmd));
+            ProcessBuilder pb = new ProcessBuilder(cmd);
+            pb.redirectErrorStream(true);
+            pb.redirectOutput(ProcessBuilder.Redirect.to(
+                    Paths.get("target", "chrome-cdp.log").toFile()));
+            chromeProcessSingleton = pb.start();
+        } else {
+            System.out.println("[cdp] reusing existing Chrome on port " + port);
+        }
+
+        // Wait for the DevTools endpoint to come up. Cold-start of Chrome
+        // with extensions can take 30-60 s on a freshly cloned profile, so
+        // give it a generous window before declaring failure.
+        long deadline = System.currentTimeMillis() + 90_000;
+        while (!isPortOpen("127.0.0.1", port)) {
+            if (System.currentTimeMillis() > deadline) {
+                throw new IllegalStateException(
+                        "Chrome did not open --remote-debugging-port=" + port
+                                + " within 90 s. Check target/chrome-cdp.log.");
+            }
+            Thread.sleep(250);
+        }
+        Thread.sleep(800); // give DevTools a beat to settle
+
+        cdpBrowserSingleton = playwright.chromium().connectOverCDP(
+                "http://127.0.0.1:" + port);
+
+        // The first context is Chrome's default profile context; that's
+        // the one with our extensions and persistent cookies.
+        if (cdpBrowserSingleton.contexts().isEmpty()) {
+            throw new IllegalStateException("CDP-attached Chrome reported no contexts");
+        }
+        contextSingleton = cdpBrowserSingleton.contexts().get(0);
+        context = contextSingleton;
+
+        applyStealthInitScript(contextSingleton);
+
+        pageSingleton = context.pages().isEmpty()
+                ? context.newPage()
+                : context.pages().get(0);
+        page = pageSingleton;
+
+        page.navigate(BASE_URL, new Page.NavigateOptions()
+                .setWaitUntil(com.microsoft.playwright.options.WaitUntilState.DOMCONTENTLOADED)
+                .setTimeout(60_000));
+        page.waitForTimeout(2_000);
+        waitOutCaptchaIfPresent();
+        dismissCookieAndLocationPrompts();
+    }
+
+    private static boolean isPortOpen(String host, int port) {
+        try (Socket s = new Socket()) {
+            s.connect(new java.net.InetSocketAddress(host, port), 500);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * One-time clone of ~/.config/google-chrome/Default into the CDP
+     * user data dir, so launched Chrome sees all real installed
+     * extensions (Buster, etc.) as already-installed rather than
+     * dev-loaded. Wipes session-restore so Chrome doesn't reopen the
+     * user's everyday tabs into our test session. Pass
+     * -DrecloneProfile=true to wipe and re-clone.
+     */
+    private void cloneRealProfileIfNeeded(Path userDataDir, boolean force) throws Exception {
+        Path defaultDir = userDataDir.resolve("Default");
+        Path realProfile = Paths.get(System.getProperty("user.home"),
+                ".config", "google-chrome");
+        Path realDefault = realProfile.resolve("Default");
+
+        if (!Files.isDirectory(realDefault)) {
+            System.out.println("[cdp] no real Chrome profile at " + realDefault
+                    + " — launching with an empty profile (no extensions).");
+            return;
+        }
+
+        if (force && Files.exists(defaultDir)) {
+            System.out.println("[cdp] -DrecloneProfile=true → wiping " + defaultDir);
+            new ProcessBuilder("rm", "-rf", defaultDir.toString())
+                    .inheritIO().start().waitFor();
+            Path localState = userDataDir.resolve("Local State");
+            if (Files.exists(localState)) Files.delete(localState);
+        }
+
+        if (Files.exists(defaultDir)) {
+            // Pre-flight: warn if the user's real Chrome is currently running
+            // on the same profile — it would have a SingletonLock that
+            // prevents us starting a second instance from the cloned dir.
+            // (Cloning still works, but launch may fail with profile-locked.)
+            Path lock = realProfile.resolve("SingletonLock");
+            if (Files.exists(lock) && Files.isSymbolicLink(lock)) {
+                System.out.println("[cdp] note: your normal Chrome is running. "
+                        + "The cloned profile will launch fine, but extensions installed "
+                        + "AFTER the last clone won't be in it — pass "
+                        + "-DrecloneProfile=true after closing Chrome to refresh.");
+            }
+            return;
+        }
+
+        System.out.println("[cdp] one-time clone of " + realDefault + " → " + defaultDir
+                + "  (this can take ~30 s on a big profile)");
+        Files.createDirectories(userDataDir);
+        ProcessBuilder cp = new ProcessBuilder(
+                "cp", "-r", realDefault.toString(), defaultDir.toString());
+        cp.redirectErrorStream(true);
+        cp.inheritIO();
+        int rc = cp.start().waitFor();
+        if (rc != 0) {
+            throw new IllegalStateException("Profile clone failed (cp -r returned " + rc + ")");
+        }
+
+        // Carry over Local State (registers known profiles + tracks extensions)
+        Path realLocalState = realProfile.resolve("Local State");
+        if (Files.exists(realLocalState)) {
+            Files.copy(realLocalState, userDataDir.resolve("Local State"),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        }
+
+        // Wipe session-restore so Chrome doesn't try to reopen all your
+        // normal tabs in the test session.
+        for (String f : new String[]{
+                "Current Session", "Current Tabs",
+                "Last Session", "Last Tabs",
+                "Sessions"
+        }) {
+            Path p = defaultDir.resolve(f);
+            if (Files.exists(p)) {
+                new ProcessBuilder("rm", "-rf", p.toString())
+                        .inheritIO().start().waitFor();
+            }
+        }
+        // Also wipe the SingletonLock from the source — it points to your
+        // running Chrome's PID and would refuse our launch.
+        for (String f : new String[]{"SingletonLock", "SingletonCookie", "SingletonSocket"}) {
+            Path p = userDataDir.resolve(f);
+            if (Files.exists(p)) {
+                try { Files.delete(p); } catch (Exception ignored) {}
+            }
+        }
+
+        java.io.File extDir = defaultDir.resolve("Extensions").toFile();
+        java.io.File[] extEntries = extDir.exists() && extDir.isDirectory()
+                ? extDir.listFiles() : null;
+        int extCount = extEntries == null ? 0 : extEntries.length;
+        System.out.println("[cdp] cloned profile has " + extCount + " extension dir(s)");
+    }
+
+    private static String resolveChromeBinaryOrThrow() {
+        for (String c : new String[]{
+                "/usr/bin/google-chrome-stable",
+                "/usr/bin/google-chrome",
+                "/opt/google/chrome/chrome",
+                "/snap/bin/chromium"
+        }) {
+            if (Files.isExecutable(Paths.get(c))) return c;
+        }
+        throw new IllegalStateException(
+                "google-chrome binary not found. Pass -DchromeBinary=/path/to/chrome.");
     }
 
     private void initSharedBrowser() throws Exception {
@@ -144,10 +395,27 @@ abstract class BaseTest {
         contextSingleton = playwright.chromium().launchPersistentContext(userDataDir, opts);
         context = contextSingleton;
 
-        // Comprehensive stealth init script — overrides the navigator/window
-        // properties PerimeterX sniffs to detect automation. Modeled on the
-        // tactics used by puppeteer-extra-plugin-stealth.
-        context.addInitScript(
+        applyStealthInitScript(contextSingleton);
+
+        pageSingleton = context.pages().isEmpty() ? context.newPage() : context.pages().get(0);
+        page = pageSingleton;
+        // Use domcontentloaded — yemeksepeti's analytics scripts can take >30s
+        // to fully load, but the DOM is ready well before that.
+        page.navigate(BASE_URL, new Page.NavigateOptions()
+                .setWaitUntil(com.microsoft.playwright.options.WaitUntilState.DOMCONTENTLOADED)
+                .setTimeout(60_000));
+        page.waitForTimeout(2_000);
+        waitOutCaptchaIfPresent();
+        dismissCookieAndLocationPrompts();
+    }
+
+    /**
+     * Apply the stealth init script to a context — overrides the
+     * navigator/window properties PerimeterX sniffs to detect automation.
+     * Modeled on the tactics from puppeteer-extra-plugin-stealth.
+     */
+    private void applyStealthInitScript(BrowserContext target) {
+        target.addInitScript(
                 "(() => {" +
                 "  Object.defineProperty(navigator, 'webdriver', {get: () => undefined});" +
                 "  Object.defineProperty(navigator, 'languages', {get: () => ['tr-TR','tr','en-US','en']});" +
@@ -182,30 +450,287 @@ abstract class BaseTest {
                 "    Object.defineProperty(navigator, 'userAgentData', {get: () => undefined});" +
                 "  }" +
                 "})();");
-
-        pageSingleton = context.pages().isEmpty() ? context.newPage() : context.pages().get(0);
-        page = pageSingleton;
-        // Use domcontentloaded — yemeksepeti's analytics scripts can take >30s
-        // to fully load, but the DOM is ready well before that.
-        page.navigate(BASE_URL, new Page.NavigateOptions()
-                .setWaitUntil(com.microsoft.playwright.options.WaitUntilState.DOMCONTENTLOADED)
-                .setTimeout(60_000));
-        page.waitForTimeout(2_000);
-        waitOutCaptchaIfPresent();
-        dismissCookieAndLocationPrompts();
     }
 
     @BeforeEach
     void resetToHome() {
-        if (!page.url().equals(BASE_URL) && !page.url().startsWith(BASE_URL + "?")) {
+        // Always re-navigate to a clean home page between tests. Even when
+        // the previous test left us on the same URL (e.g. scenario2 of
+        // YemekSepetiSearchTest stays on '/'), the top-bar autocomplete
+        // dropdown / typed search query / floating tooltip can persist
+        // and intercept the next test's first click. A fresh navigation
+        // resets that DOM state cheaply.
+        page.navigate(BASE_URL, new Page.NavigateOptions()
+                .setWaitUntil(com.microsoft.playwright.options.WaitUntilState.DOMCONTENTLOADED)
+                .setTimeout(60_000));
+        page.waitForTimeout(1_000);
+        waitOutCaptchaIfPresent();
+        dismissCookieAndLocationPrompts();
+        dismissFloatingTooltips();
+    }
+
+    /**
+     * Returns true when the page indicates a logged-in session.
+     *
+     * Multi-signal because no single selector is reliable:
+     *   1) URL must NOT be on a /login/* route.
+     *   2) "Giriş Yap" must NOT be visible inside the page header. (A welcome
+     *      modal rendered at body root also contains "Giriş Yap" — that's
+     *      not a signal, hence the header restriction.)
+     *
+     * Cheap probe — total budget under 1 s.
+     */
+    protected boolean isLoggedIn() {
+        String url;
+        try { url = page.url(); } catch (Exception e) { return false; }
+        if (url.contains("/login/") || url.endsWith("/login")) return false;
+
+        try {
+            boolean loginInHeader = page.locator(
+                    "header :is(button, a):has-text('Giriş Yap'),"
+                  + " [class*='header'] :is(button, a):has-text('Giriş Yap'),"
+                  + " nav :is(button, a):has-text('Giriş Yap')")
+                    .first()
+                    .isVisible(new com.microsoft.playwright.Locator.IsVisibleOptions().setTimeout(800));
+            return !loginInHeader;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * Clear the Yemeksepeti session and reload, leaving the browser in a
+     * logged-out state. Used by the first Login test to start from a clean
+     * slate so the welcome modal ("Hoş geldin!") is the entry point.
+     *
+     * Tries the user-menu logout first (which preserves the Google session
+     * cookie on accounts.google.com, so the next test can sign back in
+     * without driving the chooser). Falls back to clearing all cookies and
+     * reloading.
+     */
+    protected void signOutIfSignedIn() {
+        if (!isLoggedIn()) {
+            System.out.println("    [auth] already signed out");
+            return;
+        }
+        System.out.println("    [auth] currently signed in — signing out for the test");
+
+        try {
+            com.microsoft.playwright.Locator userMenu = page.locator(
+                    "[data-testid='profile-button']," +
+                    " [data-testid*='user-menu']," +
+                    " header button:has-text('Hesabım')," +
+                    " header [aria-label*='Hesab' i]").first();
+            if (userMenu.isVisible(new com.microsoft.playwright.Locator.IsVisibleOptions().setTimeout(2_000))) {
+                userMenu.click();
+                page.waitForTimeout(1_500);
+                com.microsoft.playwright.Locator logout = page.locator(
+                        "text=/Çıkış Yap|Çıkış yap|Sign out|Log out/i").first();
+                if (logout.isVisible(new com.microsoft.playwright.Locator.IsVisibleOptions().setTimeout(2_000))) {
+                    logout.click();
+                    page.waitForTimeout(3_000);
+                    if (!isLoggedIn()) {
+                        System.out.println("    [auth] signed out via user menu");
+                        return;
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
+
+        // Fallback: clear ONLY yemeksepeti cookies, preserve everything
+        // else (especially the accounts.google.com session cookie — the
+        // next test signs back in via the Google OAuth chooser, which
+        // depends on that cookie being intact).
+        try {
+            java.util.List<com.microsoft.playwright.options.Cookie> keep = new java.util.ArrayList<>();
+            for (com.microsoft.playwright.options.Cookie c : context.cookies()) {
+                String d = c.domain == null ? "" : c.domain.toLowerCase();
+                if (d.contains("yemeksepeti")) continue;
+                keep.add(c);
+            }
+            context.clearCookies();
+            if (!keep.isEmpty()) context.addCookies(keep);
             page.navigate(BASE_URL, new Page.NavigateOptions()
                     .setWaitUntil(com.microsoft.playwright.options.WaitUntilState.DOMCONTENTLOADED)
                     .setTimeout(60_000));
-            page.waitForTimeout(1_000);
+            page.waitForTimeout(2_000);
             waitOutCaptchaIfPresent();
             dismissCookieAndLocationPrompts();
+            System.out.println("    [auth] signed out (yemeksepeti cookies cleared, "
+                    + "Google session preserved)");
+        } catch (Exception e) {
+            System.out.println("    [auth] sign-out fallback failed: " + e.getMessage());
         }
-        dismissFloatingTooltips();
+    }
+
+    /**
+     * Sign in via "Google ile devam et". Relies on the cloned Chrome profile
+     * already having a valid Google session cookie — Yemeksepeti's OAuth
+     * popup will then auto-select the account and redirect back without
+     * user interaction. If a popup needs manual driving (e.g. account
+     * chooser, consent screen), we wait up to {@code loginTimeoutMs}
+     * (default 90 s) for the user to complete it in the open browser.
+     *
+     * IMPORTANT (per user instruction and test_plan.pdf §1.3): this only
+     * authenticates. It MUST NEVER be used as a stepping-stone toward
+     * placing a real order. Cart tests stop at add/increment/decrement
+     * inside the menu and the cart sidebar.
+     */
+    protected void ensureLoggedInWithGoogle() {
+        if (isLoggedIn()) {
+            System.out.println("    [auth] already logged in (cloned-profile cookie still valid)");
+            return;
+        }
+        System.out.println("    [auth] not logged in — opening welcome modal");
+        try {
+            page.getByText("Giriş Yap").first()
+                    .click(new com.microsoft.playwright.Locator.ClickOptions().setTimeout(5_000));
+        } catch (Exception e) {
+            throw new IllegalStateException(
+                    "Could not find 'Giriş Yap' button on header: " + e.getMessage());
+        }
+        page.waitForTimeout(2_000);
+
+        com.microsoft.playwright.Locator googleBtn = page.locator(
+                "[data-testid*='google' i]," +
+                " button:has-text('Google ile devam')," +
+                " button:has-text('Google ile')," +
+                " button:has(img[alt*='Google' i])," +
+                " button:has(svg[aria-label*='Google' i])").first();
+        try {
+            googleBtn.waitFor(new com.microsoft.playwright.Locator.WaitForOptions().setTimeout(5_000));
+        } catch (Exception e) {
+            System.out.println("    [auth] no Google button found on welcome modal — "
+                    + "drive sign-in manually in the open browser");
+        }
+
+        // Click the Google button. Yemeksepeti opens OAuth in a popup;
+        // capture it so we can drive the account chooser. If there's no
+        // popup (e.g. site uses an in-page redirect), the catch falls
+        // through and we just poll the main page.
+        com.microsoft.playwright.Page popup = null;
+        try {
+            popup = context.waitForPage(() -> {
+                System.out.println("    [auth] clicking 'Google ile devam et'");
+                googleBtn.click();
+            });
+        } catch (Exception e) {
+            System.out.println("    [auth] no popup opened — assuming in-page OAuth redirect");
+        }
+        if (popup != null) {
+            try {
+                drivOAuthPopup(popup);
+            } catch (Exception e) {
+                System.out.println("    [auth] popup driver hit: " + e.getMessage()
+                        + " — continuing with main-page polling");
+            }
+        }
+
+        long timeoutMs = Long.parseLong(System.getProperty("loginTimeoutMs", "180000"));
+        System.out.println("    [auth] waiting up to " + (timeoutMs / 1000)
+                + "s for login (drive the Google chooser/consent in the browser if it pauses)");
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        long lastStatus = 0;
+        while (System.currentTimeMillis() < deadline) {
+            if (isLoggedIn()) {
+                System.out.println("    [auth] login confirmed (url=" + page.url() + ")");
+                page.waitForTimeout(1_500);
+                return;
+            }
+            // Every 15 s, tell the user what page we're stuck on so they
+            // know whether to act in the browser.
+            long now = System.currentTimeMillis();
+            if (now - lastStatus > 15_000) {
+                System.out.println("    [auth] still waiting... current url=" + safeUrl());
+                lastStatus = now;
+            }
+            page.waitForTimeout(1_000);
+        }
+        throw new IllegalStateException(
+                "Google sign-in did not complete within " + (timeoutMs / 1000) + " s. "
+              + "Run with -DloginTimeoutMs=300000 for more time, OR sign in once manually "
+              + "in the open Chrome window — the cloned profile keeps the cookie for next run. "
+              + "Current url: " + safeUrl());
+    }
+
+    private String safeUrl() {
+        try { return page.url(); } catch (Exception e) { return "(unavailable)"; }
+    }
+
+    /**
+     * Drive Google's OAuth popup: pick the first listed account, click any
+     * "Devam et" / "Continue" consent button, and wait for the popup to
+     * close. We do NOT enter passwords — the cloned profile carries the
+     * user's Google session cookie, so the chooser is the only step.
+     */
+    private void drivOAuthPopup(com.microsoft.playwright.Page popup) {
+        try {
+            popup.waitForLoadState(
+                    com.microsoft.playwright.options.LoadState.DOMCONTENTLOADED,
+                    new com.microsoft.playwright.Page.WaitForLoadStateOptions().setTimeout(15_000));
+        } catch (Exception ignored) {
+        }
+        popup.waitForTimeout(1_000);
+        System.out.println("    [auth] OAuth popup at " + popup.url());
+
+        // 1) Account chooser tile.
+        com.microsoft.playwright.Locator account = popup.locator(
+                "div[data-identifier]," +
+                " li[data-identifier]," +
+                " div[data-account-id]," +
+                " div[role='link'][data-identifier]").first();
+        try {
+            account.waitFor(new com.microsoft.playwright.Locator.WaitForOptions().setTimeout(15_000));
+            String who = account.getAttribute("data-identifier");
+            if (who == null) who = account.getAttribute("data-email");
+            System.out.println("    [auth] picking Google account: " + (who == null ? "(first listed)" : who));
+            account.click();
+        } catch (Exception e) {
+            System.out.println("    [auth] no account-chooser tile within 15s — "
+                    + "either Google asked for password (manual) or popup auto-redirected");
+        }
+
+        // 2) Possible consent / "Devam et" button on the OAuth scope page.
+        try {
+            popup.waitForLoadState(
+                    com.microsoft.playwright.options.LoadState.DOMCONTENTLOADED,
+                    new com.microsoft.playwright.Page.WaitForLoadStateOptions().setTimeout(8_000));
+        } catch (Exception ignored) {
+        }
+        popup.waitForTimeout(500);
+        for (String sel : new String[]{
+                "button:has-text('Devam et')",
+                "button:has-text('Devam Et')",
+                "button:has-text('İzin ver')",
+                "button:has-text('Continue')",
+                "button:has-text('Allow')",
+                "[role='button']:has-text('Devam')",
+                "[role='button']:has-text('Continue')"
+        }) {
+            try {
+                com.microsoft.playwright.Locator btn = popup.locator(sel).first();
+                if (btn.isVisible(new com.microsoft.playwright.Locator.IsVisibleOptions().setTimeout(800))) {
+                    System.out.println("    [auth] clicking consent button: " + sel);
+                    btn.click();
+                    break;
+                }
+            } catch (Exception ignored) {
+            }
+        }
+
+        // 3) Wait for popup to close (means OAuth completed and Yemeksepeti
+        //    received the callback). Cap at 30 s.
+        long deadline = System.currentTimeMillis() + 30_000;
+        while (!popup.isClosed() && System.currentTimeMillis() < deadline) {
+            try { popup.waitForTimeout(500); } catch (Exception e) { break; }
+        }
+        if (popup.isClosed()) {
+            System.out.println("    [auth] OAuth popup closed");
+        } else {
+            System.out.println("    [auth] OAuth popup still open after 30s — "
+                    + "user may need to finish the consent flow manually");
+        }
     }
 
     /**
@@ -250,8 +775,10 @@ abstract class BaseTest {
     // across YemekSepetiSearchTest → YemekSepetiCartTest → YemekSepetiPayTest.
 
     /**
-     * If the page is currently the PerimeterX captcha wall, wait for the user
-     * to solve it (headed mode). In headless we fail loudly so the user knows
+     * If the page is currently the PerimeterX captcha wall, click the
+     * challenge to activate it (press-and-hold start, or reCAPTCHA
+     * checkbox), then wait for installed extensions (Buster, NopeCHA, …)
+     * to actually solve it. In headless we fail loudly so the user knows
      * to run headed once.
      */
     protected void waitOutCaptchaIfPresent() {
@@ -263,12 +790,23 @@ abstract class BaseTest {
                   + "-Dheadless=false, solve the captcha, then re-run.");
         }
         long timeoutMs = Long.parseLong(System.getProperty("captchaTimeoutMs", "300000"));
-        System.out.println(">>> Captcha detected. Solve it in the open browser; "
-                + "the test will resume automatically (waiting up to "
+        System.out.println(">>> Captcha detected — clicking the challenge so the "
+                + "captcha-solver extension can take over (waiting up to "
                 + (timeoutMs / 1000) + "s).");
+
+        triggerCaptchaInteraction();
+
         long deadline = System.currentTimeMillis() + timeoutMs;
+        long lastRetrigger = System.currentTimeMillis();
         while (isOnCaptcha() && System.currentTimeMillis() < deadline) {
             page.waitForTimeout(1_000);
+            // Re-poke the challenge every 20 s so a stuck press-and-hold
+            // gets another mouse-down, and Buster's content script gets
+            // another chance to attach to the reCAPTCHA bframe.
+            if (System.currentTimeMillis() - lastRetrigger > 20_000) {
+                triggerCaptchaInteraction();
+                lastRetrigger = System.currentTimeMillis();
+            }
         }
         if (isOnCaptcha()) {
             throw new IllegalStateException(
@@ -278,7 +816,154 @@ abstract class BaseTest {
         page.waitForTimeout(1_500);
     }
 
+    /**
+     * Auto-click the visible captcha so the user's installed solver
+     * extension (Buster for reCAPTCHA, manual for press-and-hold) can do
+     * the actual work. The challenge often lives inside a child iframe
+     * (PerimeterX hosts its press-and-hold UI in `_pxCaptcha` /
+     * `#captcha-frame`; Google hosts the checkbox in `recaptcha/anchor`),
+     * so we sweep the main frame AND every child frame.
+     *
+     * Tries, in order:
+     *   1) PerimeterX press-and-hold — issues a real mousedown for ~12 s
+     *      on the button's screen position, then mouseup. We use page
+     *      coordinates because the button can be inside an iframe whose
+     *      bounding box still maps onto the page's mouse area.
+     *   2) Google reCAPTCHA v2 checkbox — Buster takes over from there.
+     */
+    private void triggerCaptchaInteraction() {
+        // ---- 1) PerimeterX press-and-hold ----------------------------
+        String[] holdSelectors = new String[]{
+                "button:has-text('Press & Hold')",
+                "button:has-text('Press and Hold')",
+                "button:has-text('Basılı Tutun')",
+                "button:has-text('Basılı Tut')",
+                "div[role='button']:has-text('Press')",
+                "div[role='button']:has-text('Basılı')",
+                "[id*='px-captcha'] [role='button']",
+                "[id*='px-captcha'] button",
+                ".px-captcha-container [role='button']",
+                "#px-captcha button",
+                // Bare-text fallbacks — PerimeterX sometimes ships the
+                // button as a non-semantic <div> with only inner text.
+                "text=/Press & Hold/i",
+                "text=/Basılı Tutun/i"
+        };
+
+        // Sweep the main frame plus every nested frame.
+        for (com.microsoft.playwright.Frame frame : allFramesIncludingMain()) {
+            for (String sel : holdSelectors) {
+                try {
+                    com.microsoft.playwright.Locator btn = frame.locator(sel).first();
+                    if (btn.count() == 0) continue;
+                    if (!btn.isVisible(new com.microsoft.playwright.Locator.IsVisibleOptions()
+                            .setTimeout(400))) continue;
+                    System.out.println("    [captcha] press-and-hold detected (sel=" + sel
+                            + ", frame=" + (frame == page.mainFrame() ? "main" : frame.url())
+                            + ") — holding for 12 s");
+                    com.microsoft.playwright.options.BoundingBox box = btn.boundingBox();
+                    if (box != null) {
+                        double cx = box.x + box.width / 2;
+                        double cy = box.y + box.height / 2;
+                        page.mouse().move(cx, cy);
+                        page.mouse().down();
+                        page.waitForTimeout(12_000);
+                        page.mouse().up();
+                        page.waitForTimeout(1_500);
+                    } else {
+                        // Fallback if bounding box can't be resolved.
+                        btn.click(new com.microsoft.playwright.Locator.ClickOptions()
+                                .setForce(true).setDelay(12_000));
+                    }
+                    return;
+                } catch (Exception ignored) {
+                }
+            }
+        }
+
+        // ---- 2) reCAPTCHA — challenge bframe (with Buster button) ----
+        // When PerimeterX hands off to a reCAPTCHA challenge ("Devam
+        // edebilmemiz için..."), the actual challenge UI lives in the
+        // bframe (`/recaptcha/.../bframe`). Buster injects its own
+        // yellow person-with-check button into that bframe — clicking
+        // it triggers Buster's audio-challenge solver, which is what
+        // actually clears the captcha. We click the bframe Buster
+        // button first; if Buster isn't installed/visible there, we
+        // fall back to the anchor-frame checkbox click.
+        try {
+            com.microsoft.playwright.Frame bframe = null;
+            com.microsoft.playwright.Frame anchorFrame = null;
+            for (com.microsoft.playwright.Frame f : page.frames()) {
+                String url = f.url();
+                if (url == null) continue;
+                if (url.contains("/recaptcha/") && url.contains("bframe")) bframe = f;
+                else if (url.contains("/recaptcha/") && url.contains("anchor")) anchorFrame = f;
+            }
+
+            if (bframe != null) {
+                String[] busterSelectors = new String[]{
+                        "#solver-button",
+                        ".help-button-holder",
+                        "button[title*='Buster' i]",
+                        "button[aria-label*='Buster' i]",
+                        "[id*='solver']",
+                        // Generic: the Buster button is added next to the
+                        // audio (headphone) and refresh buttons in the
+                        // bottom-left of the bframe. Last button in that
+                        // toolbar that isn't the verify CTA.
+                        ".rc-buttons button:not([id*='verify'])"
+                };
+                for (String sel : busterSelectors) {
+                    try {
+                        com.microsoft.playwright.Locator btn = bframe.locator(sel).first();
+                        if (btn.count() == 0) continue;
+                        if (!btn.isVisible(new com.microsoft.playwright.Locator.IsVisibleOptions()
+                                .setTimeout(400))) continue;
+                        System.out.println("    [captcha] reCAPTCHA bframe — clicking Buster button (sel=" + sel + ")");
+                        btn.click(new com.microsoft.playwright.Locator.ClickOptions().setForce(true));
+                        page.waitForTimeout(3_000);
+                        return;
+                    } catch (Exception ignored) {
+                    }
+                }
+                System.out.println("    [captcha] reCAPTCHA bframe visible but Buster button not found — "
+                        + "is the extension active?");
+            }
+
+            if (anchorFrame != null) {
+                com.microsoft.playwright.Locator box = anchorFrame.locator(
+                        "#recaptcha-anchor, .recaptcha-checkbox").first();
+                if (box.isVisible(new com.microsoft.playwright.Locator.IsVisibleOptions().setTimeout(800))) {
+                    System.out.println("    [captcha] reCAPTCHA anchor checkbox — clicking to open challenge");
+                    box.click();
+                    page.waitForTimeout(2_000);
+                    return;
+                }
+            }
+        } catch (Exception ignored) {
+        }
+
+        System.out.println("    [captcha] could not auto-click a known challenge — "
+                + "solve it manually in the browser, the test is still polling");
+    }
+
+    /** Main frame plus every descendant frame, in iteration-safe order. */
+    private java.util.List<com.microsoft.playwright.Frame> allFramesIncludingMain() {
+        java.util.List<com.microsoft.playwright.Frame> out = new java.util.ArrayList<>();
+        out.add(page.mainFrame());
+        for (com.microsoft.playwright.Frame f : page.frames()) {
+            if (f != page.mainFrame()) out.add(f);
+        }
+        return out;
+    }
+
     private boolean isOnCaptcha() {
+        // Detect ONLY the structural signals of a real captcha — title
+        // pattern, px-captcha container, or a visible reCAPTCHA challenge
+        // iframe. Pure text matching is too noisy: words like "Basılı Tut"
+        // appear in unrelated UI hints on yemeksepeti, and matching them
+        // produced false-positive captcha detection that turned every
+        // resetToHome into a 2-minute wait for a captcha that never was.
         String title;
         try {
             title = page.title();
@@ -286,21 +971,39 @@ abstract class BaseTest {
             return false;
         }
         if (title != null && Pattern.compile(
-                "(Access to this page has been denied|Devam edebilmemiz)",
+                "(Access to this page has been denied|Devam edebilmemiz için)",
                 Pattern.CASE_INSENSITIVE).matcher(title).find()) {
             return true;
         }
         try {
-            return page.locator(
-                    "text=/Devam edebilmemiz|Ben robot değilim|Press & Hold/i")
-                    .first().isVisible();
-        } catch (Exception e) {
-            return false;
+            // PerimeterX press-and-hold container — most reliable
+            // structural signal. Visible only when challenge is up.
+            if (page.locator(
+                    "#px-captcha:visible, [id^='px-captcha'][class*='captcha']:visible," +
+                    " .px-captcha-container:visible")
+                    .first().isVisible(new com.microsoft.playwright.Locator.IsVisibleOptions().setTimeout(300))) {
+                return true;
+            }
+        } catch (Exception ignored) {
         }
+        try {
+            // reCAPTCHA challenge iframe (the bigger "select all images" frame),
+            // not the anchor frame which is always present on pages that embed
+            // reCAPTCHA invisibly.
+            for (com.microsoft.playwright.Frame f : allFramesIncludingMain()) {
+                String url = f.url();
+                if (url != null && url.contains("/recaptcha/") && url.contains("bframe")) {
+                    return true;
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return false;
     }
 
     /** Click a locator and wait for the destination to settle, transparently
-     *  handling a captcha challenge that appears on navigation. */
+     *  handling a captcha challenge OR the "Adresiniz nedir?" overlay
+     *  that appears on a restaurant detail page. */
     protected void clickAndWait(com.microsoft.playwright.Locator target) {
         target.click();
         // Wait for DOM ready, not "load" — yemeksepeti's analytics scripts
@@ -312,6 +1015,84 @@ abstract class BaseTest {
         }
         page.waitForTimeout(1_500);
         waitOutCaptchaIfPresent();
+        handleAddressPromptIfPresent();
+    }
+
+    /**
+     * If the "Adresiniz nedir?" modal is currently overlaying the page,
+     * recover by clicking "Adres Seç/Ekle", re-typing the configured
+     * `-Daddress` (default "Üniversite 2"), picking the first suggestion,
+     * and clicking "Bu Adresi Kullan". Returns true if the modal was
+     * present and we attempted recovery, false if no modal was visible.
+     *
+     * This modal can appear two ways:
+     *   1) On a restaurant detail page load — Yemeksepeti hasn't
+     *      validated that the home-page address is in the restaurant's
+     *      delivery zone, so it asks again. The overlay backdrop blocks
+     *      ALL clicks underneath.
+     *   2) When clicking '+' on a product whose restaurant's zone
+     *      doesn't match the home address. (Already handled inside
+     *      addProductToCart — this helper unifies the recovery.)
+     */
+    protected boolean handleAddressPromptIfPresent() {
+        com.microsoft.playwright.Locator dialog = page.locator(
+                "[role='dialog']:has-text('Adresiniz nedir')," +
+                " .bds-c-modal__dialog:has-text('Adresiniz nedir')").first();
+        try {
+            if (!dialog.isVisible(new com.microsoft.playwright.Locator.IsVisibleOptions().setTimeout(800))) {
+                return false;
+            }
+        } catch (Exception e) {
+            return false;
+        }
+        System.out.println("    [addr-prompt] 'Adresiniz nedir?' modal visible — re-selecting address");
+        try {
+            // Click the "Adres Seç/Ekle" / "Adres Ekle" CTA inside the modal.
+            com.microsoft.playwright.Locator cta = page.locator(
+                    "[role='dialog'] button:has-text('Adres Seç')," +
+                    " [role='dialog'] button:has-text('Adres Ekle')," +
+                    " [role='dialog'] button:has-text('Ekle')," +
+                    " [role='dialog'] button:has-text('Seç')").first();
+            cta.click(new com.microsoft.playwright.Locator.ClickOptions().setTimeout(3_000));
+            page.waitForTimeout(1_800);
+
+            // Now we're in the address-search modal. Re-type and confirm.
+            String fallback = System.getProperty("address", "Üniversite 2");
+            com.microsoft.playwright.Locator input = page.locator("#delivery-information-postal-index").first();
+            try {
+                input.waitFor(new com.microsoft.playwright.Locator.WaitForOptions().setTimeout(5_000));
+            } catch (Exception e) {
+                System.out.println("    [addr-prompt] expected address-search input but it didn't appear");
+                return true;
+            }
+            input.click();
+            input.fill("");
+            input.pressSequentially(fallback,
+                    new com.microsoft.playwright.Locator.PressSequentiallyOptions().setDelay(50));
+            page.waitForTimeout(1_500);
+            try {
+                page.locator("[data-testid='address-suggestion-item']").first().click();
+            } catch (Exception e) {
+                System.out.println("    [addr-prompt] no suggestion to click for '" + fallback + "'");
+                return true;
+            }
+            page.waitForTimeout(1_500);
+            com.microsoft.playwright.Locator confirm = page.locator(
+                    "[data-testid='location-search-go-icon']," +
+                    " button[aria-label='Bu Adresi Kullan']").first();
+            try {
+                confirm.click(new com.microsoft.playwright.Locator.ClickOptions().setTimeout(5_000));
+            } catch (Exception ignored) {
+            }
+            page.waitForTimeout(2_500);
+            page.keyboard().press("Escape");
+            page.waitForTimeout(800);
+            System.out.println("    [addr-prompt] re-selected address: " + fallback);
+            return true;
+        } catch (Exception e) {
+            System.out.println("    [addr-prompt] recovery failed: " + e.getMessage());
+            return true;
+        }
     }
 
     /**
@@ -320,7 +1101,39 @@ abstract class BaseTest {
      * the "Bu Adresi Kullan" (Use This Address) confirm button. Without that
      * step, cart actions later fail with the "Adresiniz nedir?" prompt.
      */
+    /**
+     * Returns true when the home page already shows a confirmed delivery
+     * address — i.e., the location-search button shows a real address
+     * string (not the placeholder "Adresiniz nedir?" / "Adresini gir").
+     * Used by the cart tests to skip selectAddress() when the
+     * setup-cart-profile.sh helper already saved one.
+     */
+    protected boolean hasConfirmedAddress() {
+        try {
+            com.microsoft.playwright.Locator btn = page.locator("[data-testid='location-search-button']").first();
+            if (!btn.isVisible(new com.microsoft.playwright.Locator.IsVisibleOptions().setTimeout(2_000))) {
+                return false;
+            }
+            String text = btn.innerText().trim();
+            // "Adresiniz nedir?" or "Adresini gir" → no confirmed address.
+            // Anything else (a real address string) → confirmed.
+            if (text.isEmpty()) return false;
+            String lc = text.toLowerCase(java.util.Locale.ROOT);
+            if (lc.contains("adresiniz nedir") || lc.contains("adresini gir")
+                    || lc.contains("teslimat adresini")) {
+                return false;
+            }
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     protected void selectAddress(String query) {
+        if (hasConfirmedAddress()) {
+            System.out.println("    [addr] already have a confirmed address — skipping");
+            return;
+        }
         page.locator("[data-testid='location-search-button']").click();
         page.waitForTimeout(1_500);
 
@@ -349,6 +1162,24 @@ abstract class BaseTest {
         // sign-in prompt, etc.) so subsequent clicks aren't intercepted.
         page.keyboard().press("Escape");
         page.waitForTimeout(800);
+        // The location-search modal sometimes leaves its backdrop
+        // (`toolbox-search-overlay`) attached after navigation, intercepting
+        // pointer events on the restaurant cards underneath. Wait for it to
+        // detach; if it persists, click the backdrop to dismiss.
+        com.microsoft.playwright.Locator overlay = page.locator(
+                "[data-testid='toolbox-search-overlay']").first();
+        try {
+            overlay.waitFor(new com.microsoft.playwright.Locator.WaitForOptions()
+                    .setState(WaitForSelectorState.DETACHED)
+                    .setTimeout(2_000));
+        } catch (Exception e) {
+            try {
+                overlay.click(new com.microsoft.playwright.Locator.ClickOptions()
+                        .setForce(true).setTimeout(1_000));
+                page.waitForTimeout(500);
+            } catch (Exception ignored) {
+            }
+        }
     }
 
     protected void dismissCookieAndLocationPrompts() {
@@ -398,49 +1229,10 @@ abstract class BaseTest {
         plus.click(new com.microsoft.playwright.Locator.ClickOptions().setForce(true));
         page.waitForTimeout(900);
 
-        // "Adresiniz nedir?" — restaurant wants address re-verified for its
-        // delivery zone. Click its "Adres Seç/Ekle" button to open the
-        // restaurant-context address modal, re-pick first suggestion, retry.
-        com.microsoft.playwright.Locator addrPrompt = page.locator(
-                "[role='dialog']:has-text('Adresiniz nedir')," +
-                " .bds-c-modal__dialog:has-text('Adresiniz nedir')").first();
-        if (addrPrompt.count() > 0 && addrPrompt.isVisible()) {
-            System.out.println("    (Adresiniz nedir? — re-verifying address for this restaurant)");
-            try {
-                page.locator("[role='dialog'] button:has-text('Adres Seç')," +
-                             " [role='dialog'] button:has-text('Ekle')").first()
-                        .click(new com.microsoft.playwright.Locator.ClickOptions().setTimeout(2_000));
-                page.waitForTimeout(2_000);
-                // Now we're in the address-search modal. Re-type and confirm.
-                com.microsoft.playwright.Locator input = page.locator("#delivery-information-postal-index").first();
-                if (input.count() > 0 && input.isVisible()) {
-                    String fallback = System.getProperty("address", "Maslak");
-                    input.click();
-                    input.fill("");
-                    input.pressSequentially(fallback,
-                            new com.microsoft.playwright.Locator.PressSequentiallyOptions().setDelay(50));
-                    page.waitForTimeout(1_500);
-                    com.microsoft.playwright.Locator suggestion = page.locator(
-                            "[data-testid='address-suggestion-item']").first();
-                    if (suggestion.count() > 0) {
-                        suggestion.click();
-                        page.waitForTimeout(1_500);
-                    }
-                    // Confirm with "Bu Adresi Kullan"
-                    com.microsoft.playwright.Locator confirm = page.locator(
-                            "[data-testid='location-search-go-icon']," +
-                            " button[aria-label='Bu Adresi Kullan']").first();
-                    if (confirm.count() > 0) {
-                        confirm.click();
-                        page.waitForTimeout(2_500);
-                        page.keyboard().press("Escape");
-                        page.waitForTimeout(500);
-                    }
-                }
-            } catch (Exception e) {
-                System.out.println("    (address re-verify failed: " + e.getMessage() + ")");
-            }
-            // Whether or not the address took, retry the + click ONCE
+        // "Adresiniz nedir?" can pop up here too (restaurant wants address
+        // re-verified for its delivery zone). Recover via the shared
+        // helper, then retry the + click ONCE.
+        if (handleAddressPromptIfPresent()) {
             page.waitForTimeout(800);
             try {
                 plus.click(new com.microsoft.playwright.Locator.ClickOptions().setForce(true));
@@ -491,50 +1283,67 @@ abstract class BaseTest {
             return null;
         }
 
-        // Get all restaurant links in the SAME swimlane container as the header.
+        // Resolve all restaurant URLs UP FRONT. The DOM Locator goes stale
+        // every time we navigate to a restaurant and back, so we can't keep
+        // a Locator across iterations — but we can keep the URL strings
+        // (relative hrefs are absolutized below).
         com.microsoft.playwright.Locator expressLane = page.locator(
                 "section:has(h2:has-text('Express teslimatlı'))," +
                 " div:has(> h2:has-text('Express teslimatlı'))").first();
         com.microsoft.playwright.Locator cards = expressLane.locator("a[href*='/restaurant/']");
-        int n = Math.min(cards.count(), maxToTry);
-        System.out.println("    Express lane restaurant count: " + cards.count() + " (will try " + n + ")");
-
-        java.util.Set<String> tried = new java.util.HashSet<>();
-        for (int i = 0; i < n; i++) {
-            com.microsoft.playwright.Locator card = cards.nth(i);
-            String href = card.getAttribute("href");
-            if (href == null || tried.contains(href)) continue;
-            tried.add(href);
+        int total = cards.count();
+        java.util.LinkedHashSet<String> urls = new java.util.LinkedHashSet<>();
+        for (int i = 0; i < total && urls.size() < maxToTry; i++) {
             try {
-                card.scrollIntoViewIfNeeded();
-                clickAndWait(card);
+                String href = cards.nth(i).getAttribute("href",
+                        new com.microsoft.playwright.Locator.GetAttributeOptions().setTimeout(2_000));
+                if (href == null || href.isEmpty()) continue;
+                String absolute = href.startsWith("http") ? href : BASE_URL.replaceAll("/$", "") + href;
+                urls.add(absolute);
+            } catch (Exception ignored) {
+            }
+        }
+        System.out.println("    Express lane restaurant count: " + total
+                + " (resolved " + urls.size() + " urls, will try up to " + maxToTry + ")");
+
+        int idx = 0;
+        for (String url : urls) {
+            idx++;
+            try {
+                page.navigate(url, new Page.NavigateOptions()
+                        .setWaitUntil(com.microsoft.playwright.options.WaitUntilState.DOMCONTENTLOADED)
+                        .setTimeout(15_000));
             } catch (Exception e) {
+                System.out.println("    [express #" + idx + "] " + url + " — navigate failed, next");
                 continue;
             }
+            page.waitForTimeout(800);
+            waitOutCaptchaIfPresent();
+            // The "Adresiniz nedir?" overlay can appear on page load,
+            // not only after the + click — recover before we even look
+            // for the menu, otherwise its backdrop intercepts clicks.
+            handleAddressPromptIfPresent();
             dismissFloatingTooltips();
+
             com.microsoft.playwright.Locator firstProduct = page.locator(
                     "[data-testid='menu-product']").first();
             try {
                 firstProduct.waitFor(
-                        new com.microsoft.playwright.Locator.WaitForOptions().setTimeout(8_000));
+                        new com.microsoft.playwright.Locator.WaitForOptions().setTimeout(5_000));
             } catch (Exception e) {
-                System.out.println("    [express #" + (i + 1) + "] " + href + " — no menu, skipping");
-                page.goBack();
-                page.waitForTimeout(1_000);
+                System.out.println("    [express #" + idx + "] " + url + " — no menu in 5s, skipping");
                 continue;
             }
-            firstProduct.scrollIntoViewIfNeeded();
-            for (int retry = 1; retry <= 2; retry++) {
-                dismissFloatingTooltips();
-                if (addProductToCart(firstProduct)) {
-                    System.out.println("    [express #" + (i + 1) + "] " + href + " — accepted");
-                    return page.url();
-                }
+            try {
+                firstProduct.scrollIntoViewIfNeeded();
+            } catch (Exception ignored) {
             }
-            System.out.println("    [express #" + (i + 1) + "] " + href + " — add failed, next");
-            page.goBack();
-            page.waitForTimeout(1_500);
             dismissFloatingTooltips();
+            if (addProductToCart(firstProduct)) {
+                System.out.println("    [express #" + idx + "] " + url + " — accepted");
+                return page.url();
+            }
+            System.out.println("    [express #" + idx + "] " + url + " — add failed, next");
         }
         return null;
     }
@@ -584,6 +1393,7 @@ abstract class BaseTest {
             waitOutCaptchaIfPresent();
         }
 
+        handleAddressPromptIfPresent();
         dismissFloatingTooltips();
         com.microsoft.playwright.Locator firstProduct = page.locator("[data-testid='menu-product']").first();
         firstProduct.waitFor(new com.microsoft.playwright.Locator.WaitForOptions().setTimeout(10_000));

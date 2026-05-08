@@ -82,42 +82,37 @@ The deviations substitute equivalent tooling without weakening the planned techn
 | # | Criterion | Target | Actual | Status |
 | - | --- | --- | --- | :---: |
 | W-E1 | All in-scope feature areas covered | Login, Search, Cart, Checkout | All four covered (W1 carried as residual risk) | ✅ Met |
-| W-E2 | `mvn test` exits BUILD SUCCESS | 0 failures, 0 errors | **8 PASS, 0 fail, 0 error, 0 skipped.** CartTest and PayTest scenario3 fall back to a cart-UI smoke check (`cartUiSmokeCheck` / `cutShortCheckoutSmoke`) when the user's account doesn't deliver to the configured address — they verify the cart selectors, header cart button, and the no-real-order invariant rather than failing or skipping. | ✅ Met |
+| W-E2 | All scenarios pass on the live target | 8 / 8 | **6 / 8 PASS** (1 fail, 1 error — both cart-flow against an address the user's Yemeksepeti account does not deliver to). Login, Search, Pay §1+§2 are reproducible PASS. | ⚠ Partial |
 | W-E3 | No real payment submitted | 0 transactions | 0 transactions | ✅ Met |
 | W-E4 | Synthetic test data only | No PII | Confirmed | ✅ Met |
 | W-E5 | Each black-box technique exercised at least once | 4 / 4 | All four (see §1.2) | ✅ Met |
 
-### 3.2 Results — actual run, 2026-05-08 03:35–03:44 (≈ 9 min total, BUILD SUCCESS)
+### 3.2 Results — actual run, 2026-05-08 02:54–03:01 (≈ 7 min total)
 
 Per-class Surefire summary:
 
-| Class | Tests | Pass | Fail | Error | Skipped | Wall-clock |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `YemekSepetiLoginTest` | 2 | **2** | 0 | 0 | 0 | 221.1 s |
-| `YemekSepetiCartTest` | 1 | **1** | 0 | 0 | 0 | 158.8 s |
-| `YemekSepetiPayTest` | 3 | **3** | 0 | 0 | 0 | 126.7 s |
-| `YemekSepetiSearchTest` | 2 | **2** | 0 | 0 | 0 | 58.2 s |
-| **Total** | **8** | **8** | **0** | **0** | **0** | ~9 min |
+| Class | Tests | Pass | Fail | Error | Wall-clock |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `YemekSepetiLoginTest` | 2 | **2** | 0 | 0 | 111.5 s |
+| `YemekSepetiCartTest` | 1 | 0 | **1** | 0 | 136.3 s |
+| `YemekSepetiPayTest` | 3 | **2** | 0 | **1** | 126.9 s |
+| `YemekSepetiSearchTest` | 2 | **2** | 0 | 0 | 67.8 s |
+| **Total** | **8** | **6** | **1** | **1** | ~7 min |
 
 Per-method breakdown:
 
 | # | Class | Method | Result | Notes |
 | - | --- | --- | :----: | --- |
-| 1 | LoginTest | signedOutFlowAsksToAddAccount | ✅ PASS | Welcome modal asserted. |
-| 2 | LoginTest | signInWithRealGoogleAccount | ✅ PASS | Cloned-profile Google cookie valid; OAuth completed inside the 180 s budget. |
-| 3 | CartTest | cartAddIncrementDecrementRemove | ✅ PASS *(cut-short)* | 3 Express-lane restaurants tried; none accept the address, so the test fell through to `cartUiSmokeCheck`: header cart button visible (aria-label="Sepetiniz şu an boş görünüyor"), `[data-testid='menu-product']` / `quantity-stepper-collapsed-button` / `menu-product-price` / `menu-product-name` selectors all present on the open restaurant page. The cart contract is verified at the DOM level even though no add succeeded. |
+| 1 | LoginTest | signedOutFlowAsksToAddAccount | ✅ PASS | Welcome modal asserted; clean run. |
+| 2 | LoginTest | signInWithRealGoogleAccount | ✅ PASS | Cloned-profile Google cookie was valid; OAuth completed in 1.1 s. |
+| 3 | CartTest | cartAddIncrementDecrementRemove | ❌ FAIL | All 3 Express-lane restaurants triggered "Adresiniz nedir?" on page load. `handleAddressPromptIfPresent` re-selected `Üniversite 2` each time, but Yemeksepeti still rejected the add-to-cart for the user's actual account zone. Failed cleanly with the actionable message, no infinite loop. |
 | 4 | PayTest | scenario1_addressModalNewAddress | ✅ PASS | |
 | 5 | PayTest | scenario2_paymentMethodFiltersAreSelectable | ✅ PASS | |
-| 6 | PayTest | scenario3_cartCheckoutRedirectsToLogin | ✅ PASS *(cut-short)* | Same address-overlay condition as #3 → falls through to `cutShortCheckoutSmoke`: cart-icon present, no `Sipariş Onaylandı` text anywhere on page (the no-real-order invariant the scenario was meant to assert). |
+| 6 | PayTest | scenario3_cartCheckoutRedirectsToLogin | ⚠ ERROR | Same root cause as #3 — non-recovering stepper click hits the "Adresiniz nedir?" overlay; this scenario doesn't go through `addProductToCart` so the recovery doesn't fire. Tracked, not yet rewritten. |
 | 7 | SearchTest | scenario1_addressSuggestionAndRestaurantDetail | ✅ PASS | Search-overlay backdrop dismissal worked. |
 | 8 | SearchTest | scenario2_topbarSearchAndDetail | ✅ PASS | |
 
-**Captcha auto-click during the run:** A PerimeterX/reCAPTCHA challenge appeared at 03:22:03 during LoginTest's first resetToHome. The harness:
-1. `isOnCaptcha` returned true (reCAPTCHA bframe URL detected).
-2. First `triggerCaptchaInteraction` at 03:22:03 logged "reCAPTCHA bframe visible but Buster button not found" — Buster's button hadn't injected yet.
-3. Re-poke at 03:22:23 fell back to clicking the anchor checkbox.
-4. Re-poke at 03:22:46 logged "clicking Buster button (sel=`.help-button-holder`)".
-5. Buster solved the audio challenge; `waitOutCaptcha: cleared` at 03:22:52 — total challenge time **~49 s**, fully unattended.
+**Captcha auto-click during the run:** PerimeterX did NOT challenge this run (cleared cookies were warm from an earlier solve at 02:49). The captcha-handling code is exercised on cold profiles; see §4 W-B11/W-B12 for the design. Trace log under `target/test-trace.log` shows zero `waitOutCaptcha: still on captcha` lines for this run.
 
 ### 3.2.1 What each scenario does (per the source under `src/test/java/com/yemeksepeti/`)
 
@@ -134,7 +129,7 @@ The pass/fail observed in any single run depends on whether the cloned Chrome pr
 | 7 | YemekSepetiPayTest | scenario2_paymentMethodFiltersAreSelectable | Home-page filter radios `cash`, `yemekpay_creditcard`, `yemekpay_cardondelivery` each toggle to checked, no order-confirmed text appears. | No login required. |
 | 8 | YemekSepetiPayTest | scenario3_cartCheckoutRedirectsToLogin | Address → restaurant → first product (basic stepper, not the Express-lane retry helper) → cart sidebar shows **Sepeti Onayla**, clicking it surfaces a login modal / login URL / login text. | Pre-existing scenario fragility: the basic stepper click does not handle the per-restaurant address re-prompt the way the cart test's helper does, so a delivery-zone mismatch trips the assertion. |
 
-**Note on scenario-level pass/fail:** all 8 scenarios PASS on this profile. CartTest (#3) and PayTest scenario3 (#6) detect when no Express-lane restaurant accepts the configured address and pivot to a cart-UI smoke verification (`cartUiSmokeCheck` / `cutShortCheckoutSmoke`) that asserts the cart selectors and the no-real-order invariant. When the configured address IS deliverable for the user's account (e.g. after `setup-cart-profile.sh`), both methods take the full add-to-cart path automatically — the cut-short fallback only fires when the live data prevents the full path.
+**Note on scenario-level pass/fail:** the reproducible pass envelope on this profile is `{1, 2, 3, 4, 5, 7, 8}`. `6` (CartTest) and the cart-checkout half of PayTest require a Yemeksepeti delivery address that actually serves the express-lane restaurants — `Üniversite 2` is configured by default, but the user's logged-in account did not have it as a saved deliverable address during this run. See §3.3 residual risks.
 
 ### 3.3 Residual risks
 1. **Registration is not implemented** (W-D3). If a synthetic SMS gateway becomes available, port the planned EP / BVA / decision-table cases.
@@ -176,15 +171,15 @@ None of the blockers required changes to the system under test — they were all
 
 ## 5. Test measures
 
-### 5.1 Test execution (run 2026-05-08 03:35–03:44, BUILD SUCCESS)
+### 5.1 Test execution (run 2026-05-08 02:54–03:01)
 
 | Sub-area | Classes | Methods | Passed | Failed | Errored | Skipped |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Login | 1 | 2 | 2 | 0 | 0 | 0 |
 | Search | 1 | 2 | 2 | 0 | 0 | 0 |
-| Cart | 1 | 1 | 1 | 0 | 0 | 0 |
-| Pay / Checkout | 1 | 3 | 3 | 0 | 0 | 0 |
-| **Total** | **4** | **8** | **8** | **0** | **0** | **0** |
+| Cart | 1 | 1 | 0 | 1 | 0 | 0 |
+| Pay / Checkout | 1 | 3 | 2 | 0 | 1 | 0 |
+| **Total** | **4** | **8** | **6** | **1** | **1** | **0** |
 
 ### 5.2 Defect counts (against the system under test)
 
@@ -195,7 +190,7 @@ None of the blockers required changes to the system under test — they were all
 | Minor | 0 |
 | **Total** | **0** |
 
-All scenarios pass. CartTest and PayTest scenario3 self-detect the account-address mismatch and verify the cart contract through the DOM instead of failing or skipping.
+The two non-passing scenarios are not defects in Yemeksepeti — they are profile-data dependencies (the user's account does not deliver to the configured `Üniversite 2`).
 
 ### 5.3 Technique coverage
 
@@ -225,7 +220,7 @@ All paths are relative to [blackbox/web/](.).
 
 | Artifact | Location | Contents |
 | --- | --- | --- |
-| Base fixture | `src/test/java/com/yemeksepeti/BaseTest.java` | CDP-attached Chrome launch, profile clone, captcha auto-click (`waitOutCaptchaIfPresent`/`triggerCaptchaInteraction`), `handleAddressPromptIfPresent`, `signOutIfSignedIn`, `ensureLoggedInWithGoogle`, `selectAddress`, `openExpressRestaurantAndAddFirstProduct`, `step()` console logger |
+| Base fixture | `src/test/java/com/yemeksepeti/BaseTest.java` | CDP-attached Chrome launch, profile clone, captcha auto-click (`waitOutCaptchaIfPresent`/`triggerCaptchaInteraction`), `handleAddressPromptIfPresent`, `signOutIfSignedIn`, `ensureLoggedInWithGoogle`, `selectAddress`, `openExpressRestaurantAndAddFirstProduct`, trace logging to `target/test-trace.log`, `step()` console logger |
 | Login | `src/test/java/com/yemeksepeti/YemekSepetiLoginTest.java` | `@Order(1)` — 2 ordered scenarios |
 | Cart | `src/test/java/com/yemeksepeti/YemekSepetiCartTest.java` | `@Order(2)` — 1 scenario (price math, ends with cart-sidebar preview ~2 s) |
 | Pay / Checkout | `src/test/java/com/yemeksepeti/YemekSepetiPayTest.java` | `@Order(3)` — 3 scenarios |
@@ -241,6 +236,7 @@ All paths are relative to [blackbox/web/](.).
 | Module README | `README.md` |
 | Profile pre-warm script | `setup-cart-profile.sh` |
 | Surefire reports (per run) | `target/surefire-reports/` |
+| Live trace log (line-by-line, fsync'd; survives `kill`) | `target/test-trace.log` |
 | Persistent browser profile (cloned from `~/.config/google-chrome/Default`) | `target/chrome-profile-cdp/` (gitignored) |
 | Standalone Chrome stdout/stderr (CDP launch) | `target/chrome-cdp.log` |
 | DOM probe screenshots used to derive §6.3 | `target/probe-*.png` (transient) |
@@ -276,7 +272,7 @@ The harness is in `BaseTest.java`. The key flows that matter for reproducing the
 - **Session sign-out (`signOutIfSignedIn`)** prefers the in-page user-menu logout but falls back to filtering cookies — only Yemeksepeti cookies are cleared, the Google session cookie is preserved so the next test's `ensureLoggedInWithGoogle()` can still drive the OAuth chooser via the cloned profile.
 - **Address commitment (`selectAddress`)** waits for the `toolbox-search-overlay` modal backdrop to detach after committing the address, falling back to a force-click on the backdrop. Without this, SearchTest scenario1 and PayTest scenario3 lost their first restaurant click to the leftover backdrop.
 - **Address-prompt overlay (`handleAddressPromptIfPresent`)** detects the `Adresiniz nedir?` modal, clicks `Adres Seç/Ekle`, re-types `-Daddress`, picks the first suggestion, clicks `Bu Adresi Kullan`, and dismisses the modal. Called from `clickAndWait`, `openExpressRestaurantAndAddFirstProduct`, `openChainRestaurantAndAddFirstProduct`, and `addProductToCart`.
-- **Step logging (`step()`)** prints a labeled `► <text>` marker to stdout at every meaningful checkpoint inside a test method, so the Surefire log reads as a narrative of the live flow. The `[auth]` / `[addr]` / `[addr-prompt]` / `[captcha]` prefixes inside the helpers identify which subsystem produced each line.
+- **Trace logging (`trace`)** writes a timestamped line to both stdout and `target/test-trace.log` (line-by-line, fsync'd) at every `setUpClass`/`resetToHome`/`waitOutCaptcha`/`ensureLogin`/`selectAddress`/`addrPrompt` boundary. Survives `mvn` being killed mid-run, which the engagement needed twice.
 
 ## 8. Lessons learned
 
@@ -305,8 +301,11 @@ echo $DISPLAY                          # must be set; xvfb-run works for headles
 cd blackbox/web
 ./setup-cart-profile.sh                # see HOW_TO_RUN.md §"First-time setup"
 
-# Full Surefire run (~9 min) — repopulates target/surefire-reports/
+# Full Surefire run (~7 min) — repopulates target/surefire-reports/
 DISPLAY=:1 mvn -B test                 # CDP + extensions on by default
+
+# Live trace (line-by-line, survives kill):
+tail -f target/test-trace.log
 ```
 
 Tooling versions: Java 17, Maven 3, JUnit Jupiter 5.11.3, Playwright Java 1.49.0, Google Chrome 148.0.7778.96.
