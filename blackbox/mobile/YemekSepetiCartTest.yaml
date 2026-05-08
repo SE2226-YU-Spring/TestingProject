@@ -17,7 +17,7 @@ appId: com.inovel.app.yemeksepeti
       text: Efsane
 - tapOn:
     text: ürün ürününü 1 adet artır
-    index: 2
+    index: 1
 - tapOn: Sepete Git
 - assertVisible: 210,00 TL
 - tapOn: ürün ürününü 1 adet artır

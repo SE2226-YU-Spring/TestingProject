@@ -528,303 +528,121 @@
     }]
   }, {
     "id": "85471952-7a8a-4a20-8b97-670f6d8fe135",
-    "name": "Add_To_Cart_Direct",
+    "name": "Add_To_Cart",
     "commands": [{
-      "id": "946c2763-41d5-4252-b4ba-2548072f5a5d",
-      "comment": "",
-      "command": "open",
-      "target": "/restaurant/c2p3/universite-2-unlu-mamulleri-c2p3",
-      "targets": [],
-      "value": ""
-    }, {
-      "id": "f1369559-b612-4213-9244-8153a4223acd",
-      "comment": "",
-      "command": "setWindowSize",
-      "target": "998x816",
-      "targets": [],
-      "value": ""
-    }, {
-      "id": "c82133a9-0013-4586-b400-3876e46419e7",
-      "comment": "",
-      "command": "click",
-      "target": "css=.absolute-fill-parent",
-      "targets": [
-        ["css=#quantity-stepper-0-5998067 .fl-none", "css:finder"]
-      ],
-      "value": ""
-    }, {
-      "id": "54b061e2-8c48-4595-91e2-dc74eea44b8d",
-      "comment": "",
-      "command": "mouseOver",
-      "target": "css=.product-card > .absolute-fill-parent",
-      "targets": [
-        ["css=.product-card > .absolute-fill-parent", "css:finder"],
-        ["xpath=//div[@id='cart']/div[2]/div/div[3]/div/ul/li/div/section/button", "xpath:idRelative"],
-        ["xpath=//section/button", "xpath:position"]
-      ],
-      "value": ""
-    }]
-  }, {
-    "id": "cd72c6ed-1221-4310-9f53-007fe753cf1e",
-    "name": "Cart Quantity Update",
-    "commands": [{
-      "id": "658f1600-b7a1-4420-a136-59b1a2411b12",
+      "id": "77544d48-8793-4dc5-afb7-fab11793bb5f",
       "comment": "",
       "command": "open",
       "target": "/",
       "targets": [],
       "value": ""
     }, {
-      "id": "e970147f-a3a7-488a-89f3-173446a42c01",
+      "id": "0f5c4bbb-6929-41d9-8757-e0a783131694",
       "comment": "",
       "command": "setWindowSize",
-      "target": "998x816",
+      "target": "1113x942",
       "targets": [],
       "value": ""
     }, {
-      "id": "63c59006-6661-44a9-8191-a2f3689f053f",
+      "id": "db6295ca-7609-408d-a309-50d6de23b842",
       "comment": "",
       "command": "click",
-      "target": "css=.bds-c-navbar__cart > svg",
+      "target": "id=search-input-side-filters",
       "targets": [
-        ["css=.bds-c-navbar__cart > svg", "css:finder"]
+        ["id=search-input-side-filters", "id"],
+        ["css=#search-input-side-filters", "css:finder"],
+        ["xpath=//input[@id='search-input-side-filters']", "xpath:attributes"],
+        ["xpath=//section[@id='global-navbar']/div/div/div[2]/div/div/div/input", "xpath:idRelative"],
+        ["xpath=//input", "xpath:position"]
       ],
       "value": ""
     }, {
-      "id": "5c7185bc-caff-4a41-862f-0ca508534346",
+      "id": "d956d973-1aaa-4b57-a023-4225062aa380",
+      "comment": "",
+      "command": "type",
+      "target": "id=search-input-side-filters",
+      "targets": [
+        ["id=search-input-side-filters", "id"],
+        ["css=#search-input-side-filters", "css:finder"],
+        ["xpath=//input[@id='search-input-side-filters']", "xpath:attributes"],
+        ["xpath=//section[@id='global-navbar']/div/div/div[2]/div/div/div/input", "xpath:idRelative"],
+        ["xpath=//input", "xpath:position"]
+      ],
+      "value": "üniversite 2"
+    }, {
+      "id": "36cad919-9e5f-47d3-bbf4-f1ff615ed6e4",
+      "comment": "",
+      "command": "click",
+      "target": "css=.jc-space-between:nth-child(2) .bds-c-btn",
+      "targets": [
+        ["css=.jc-space-between:nth-child(2) .bds-c-btn", "css:finder"],
+        ["xpath=//section[@id='global-navbar']/div/div/div[2]/div/div/div[2]/div[2]/div/ul/li/div/button", "xpath:idRelative"],
+        ["xpath=//li/div/button", "xpath:position"]
+      ],
+      "value": ""
+    }, {
+      "id": "1dda9326-265c-4966-80a2-4297f1828495",
+      "comment": "",
+      "command": "click",
+      "target": "css=.bds-c-vendor-tile--large:nth-child(1) .bds-c-vendor-tile__elements-container",
+      "targets": [
+        ["css=.bds-c-vendor-tile--large:nth-child(1) .bds-c-vendor-tile__elements-container", "css:finder"],
+        ["xpath=//main[@id='main-content']/div/div/div/div/div[4]/section/ul/li/a/div/div[2]", "xpath:idRelative"],
+        ["xpath=//a/div/div[2]", "xpath:position"]
+      ],
+      "value": ""
+    }, {
+      "id": "6e48439a-379c-4449-98a5-419be019f455",
+      "comment": "",
+      "command": "click",
+      "target": "css=#quantity-stepper-0-5998006 .fl-none",
+      "targets": [
+        ["css=#quantity-stepper-0-5998006 .fl-none", "css:finder"]
+      ],
+      "value": ""
+    }, {
+      "id": "9bb131f7-6f6e-47f2-b907-1ca416fbd593",
+      "comment": "",
+      "command": "click",
+      "target": "css=.bds-c-quantity-stepper__button--increment > .fl-none",
+      "targets": [
+        ["css=.bds-c-quantity-stepper__button--increment > .fl-none", "css:finder"]
+      ],
+      "value": ""
+    }, {
+      "id": "d535b2c0-f80d-4c4b-b1c5-5d2decb50cb9",
       "comment": "",
       "command": "mouseOver",
-      "target": "css=.bds-c-navbar__cart > svg",
+      "target": "css=#quantity-stepper-5998006 .bds-c-quantity-stepper__button--minus",
       "targets": [
-        ["css=.bds-c-navbar__cart > svg", "css:finder"]
+        ["css=#quantity-stepper-5998006 .bds-c-quantity-stepper__button--minus", "css:finder"]
       ],
       "value": ""
     }, {
-      "id": "c57e8379-6784-4757-b9ab-7b1e68573fc2",
+      "id": "fb198de4-d26b-4cf9-a14e-53a1b753072d",
       "comment": "",
       "command": "mouseOut",
-      "target": "css=.bds-c-navbar__cart > svg",
+      "target": "css=#quantity-stepper-5998006 .bds-c-quantity-stepper__button--minus",
       "targets": [
-        ["css=.bds-c-navbar__cart > svg", "css:finder"]
+        ["css=#quantity-stepper-5998006 .bds-c-quantity-stepper__button--minus", "css:finder"]
       ],
       "value": ""
     }, {
-      "id": "fa426a08-23b5-43ac-8227-a2516c916a27",
+      "id": "7f930651-e081-4aa8-9d6d-3ed826cebb09",
       "comment": "",
       "command": "click",
-      "target": "css=.cart-product-row__add-more-button > .fl-none",
+      "target": "css=#quantity-stepper-5998006 .bds-c-quantity-stepper__button--minus > path",
       "targets": [
-        ["css=.cart-product-row__add-more-button > .fl-none", "css:finder"]
+        ["css=#quantity-stepper-5998006 .bds-c-quantity-stepper__button--minus > path", "css:finder"]
       ],
       "value": ""
     }, {
-      "id": "86072575-f0e2-4ecb-b56f-0770c995df56",
-      "comment": "",
-      "command": "mouseOut",
-      "target": "css=.dish-list-grid:nth-child(3) > .box-flex:nth-child(1) > .product-tile__button-overlay",
-      "targets": [
-        ["css=.dish-list-grid:nth-child(3) > .box-flex:nth-child(1) > .product-tile__button-overlay", "css:finder"],
-        ["xpath=//div[@id='menu__category-id-0']/ul/li/button", "xpath:idRelative"],
-        ["xpath=//section[2]/div/div/ul/li/button", "xpath:position"]
-      ],
-      "value": ""
-    }]
-  }, {
-    "id": "c6ff682b-1e7d-494e-8157-d796786c9a33",
-    "name": "Cart_Decrease_Quantity",
-    "commands": [{
-      "id": "88c3b053-4e41-40b0-ac42-a14d046b2088",
-      "comment": "",
-      "command": "open",
-      "target": "/restaurant/c2p3/universite-2-unlu-mamulleri-c2p3",
-      "targets": [],
-      "value": ""
-    }, {
-      "id": "5f5cc56f-4f8b-4eb0-89f8-ba045b0765c1",
-      "comment": "",
-      "command": "setWindowSize",
-      "target": "998x816",
-      "targets": [],
-      "value": ""
-    }, {
-      "id": "f0309562-b9b9-4817-93d7-2621baadc6fe",
+      "id": "c8c6204c-d555-460e-93b1-0551e3de4310",
       "comment": "",
       "command": "click",
-      "target": "css=#quantity-stepper-5998067 .bds-c-quantity-stepper__button--minus",
+      "target": "css=#quantity-stepper-5998006 .bds-c-quantity-stepper__button--minus > path",
       "targets": [
-        ["css=#quantity-stepper-5998067 .bds-c-quantity-stepper__button--minus", "css:finder"]
-      ],
-      "value": ""
-    }, {
-      "id": "29a6048b-3f68-4d61-936e-72512543ff7d",
-      "comment": "",
-      "command": "mouseOver",
-      "target": "css=.box-flex:nth-child(2) > .box-flex > .box-flex > img",
-      "targets": [
-        ["css=.box-flex:nth-child(2) > .box-flex > .box-flex > img", "css:finder"],
-        ["xpath=(//img[@alt='placeholder'])[2]", "xpath:img"],
-        ["xpath=//div[@id='cart']/div[2]/div/div[5]/div[2]/div[2]/div/button/img", "xpath:idRelative"],
-        ["xpath=//div[2]/div/button/img", "xpath:position"]
-      ],
-      "value": ""
-    }]
-  }, {
-    "id": "51bfafbe-58f9-4eae-9555-87265b61bda8",
-    "name": "Register_ValidEmail",
-    "commands": [{
-      "id": "1d62bf7c-60c5-4829-95cf-91cbaff20fe2",
-      "comment": "",
-      "command": "open",
-      "target": "/",
-      "targets": [],
-      "value": ""
-    }, {
-      "id": "5dbba643-5bb9-4a1d-a062-2e8cf2c4b1c2",
-      "comment": "",
-      "command": "setWindowSize",
-      "target": "998x816",
-      "targets": [],
-      "value": ""
-    }, {
-      "id": "a2b6f71f-6258-45ec-8449-0aab90da860a",
-      "comment": "",
-      "command": "click",
-      "target": "css=.bds-c-navbar__right .bds-c-btn-primary > .bds-c-btn__idle-content",
-      "targets": [
-        ["css=.bds-c-navbar__right .bds-c-btn-primary > .bds-c-btn__idle-content", "css:finder"],
-        ["xpath=//section[@id='global-navbar']/header/div[2]/div[2]/button/span", "xpath:idRelative"],
-        ["xpath=//div[2]/button/span", "xpath:position"],
-        ["xpath=//span[contains(.,'Ücretsiz teslimat için kaydolun')]", "xpath:innerText"]
-      ],
-      "value": ""
-    }, {
-      "id": "0938beb2-e803-49ce-aa28-aa4332470bf7",
-      "comment": "",
-      "command": "click",
-      "target": "css=.welcome-view__button-signup > .button",
-      "targets": [
-        ["css=.welcome-view__button-signup > .button", "css:finder"],
-        ["xpath=(//button[@type='button'])[3]", "xpath:attributes"],
-        ["xpath=//div[@id='modal-body']/div/div[2]/div/div[4]/button", "xpath:idRelative"],
-        ["xpath=//div[4]/button", "xpath:position"],
-        ["xpath=//button[contains(.,'Kayıt Ol')]", "xpath:innerText"]
-      ],
-      "value": ""
-    }, {
-      "id": "3aefeb30-5b96-4a59-bc54-e3584bfbbbdd",
-      "comment": "",
-      "command": "click",
-      "target": "id=email",
-      "targets": [
-        ["id=email", "id"],
-        ["name=email", "name"],
-        ["css=#email", "css:finder"],
-        ["xpath=//input[@id='email']", "xpath:attributes"],
-        ["xpath=//div[@id='modal-body']/div/form/div[2]/input", "xpath:idRelative"],
-        ["xpath=//div[2]/input", "xpath:position"]
-      ],
-      "value": ""
-    }, {
-      "id": "18ee92de-1610-40c4-b45a-c54d860f244e",
-      "comment": "",
-      "command": "executeScript",
-      "target": "let e=document.getElementById('email'); e.value='atakan.test@gmail.com'; e.dispatchEvent(new Event('input',{bubbles:true})); e.dispatchEvent(new Event('change',{bubbles:true})); e.dispatchEvent(new KeyboardEvent('keyup',{bubbles:true,key:'a'}));",
-      "targets": [],
-      "value": ""
-    }, {
-      "id": "8c18a751-e03f-4a2c-a3fa-4cdd9e804a97",
-      "comment": "",
-      "command": "click",
-      "target": "css=.box-flex:nth-child(5) .bds-c-btn__idle-content__label > span",
-      "targets": [
-        ["css=.box-flex:nth-child(5) .bds-c-btn__idle-content__label > span", "css:finder"],
-        ["xpath=//div[@id='modal-body']/div/form/div[3]/div/button/span/span/span", "xpath:idRelative"],
-        ["xpath=//form/div[3]/div/button/span/span/span", "xpath:position"]
-      ],
-      "value": ""
-    }]
-  }, {
-    "id": "96d4c714-1ebd-49fa-9400-80698544b215",
-    "name": "Register_InvalidEmail",
-    "commands": [{
-      "id": "d9c3efbe-14ab-4880-babf-75bb59dd8044",
-      "comment": "",
-      "command": "open",
-      "target": "/",
-      "targets": [],
-      "value": ""
-    }, {
-      "id": "56473923-e070-4fa3-96be-b46b15113829",
-      "comment": "",
-      "command": "setWindowSize",
-      "target": "998x816",
-      "targets": [],
-      "value": ""
-    }, {
-      "id": "24762819-6eaa-4f93-b2db-539081885136",
-      "comment": "",
-      "command": "click",
-      "target": "css=.box-flex:nth-child(3) > .bds-c-btn-cursor:nth-child(2) .bds-c-btn__idle-content__label > span",
-      "targets": [
-        ["css=.box-flex:nth-child(3) > .bds-c-btn-cursor:nth-child(2) .bds-c-btn__idle-content__label > span", "css:finder"],
-        ["xpath=//section[@id='global-navbar']/header/div[2]/div[2]/button/span/span/span", "xpath:idRelative"],
-        ["xpath=//div[2]/button/span/span/span", "xpath:position"]
-      ],
-      "value": ""
-    }, {
-      "id": "582d0c3e-61b1-4314-99b3-adcc924769b0",
-      "comment": "",
-      "command": "click",
-      "target": "css=.welcome-view__button-signup > .button",
-      "targets": [
-        ["css=.welcome-view__button-signup > .button", "css:finder"],
-        ["xpath=(//button[@type='button'])[3]", "xpath:attributes"],
-        ["xpath=//div[@id='modal-body']/div/div[2]/div/div[4]/button", "xpath:idRelative"],
-        ["xpath=//div[4]/button", "xpath:position"],
-        ["xpath=//button[contains(.,'Kayıt Ol')]", "xpath:innerText"]
-      ],
-      "value": ""
-    }, {
-      "id": "5582370b-f730-4554-86e6-5fc2c1645511",
-      "comment": "",
-      "command": "click",
-      "target": "id=email",
-      "targets": [
-        ["id=email", "id"],
-        ["name=email", "name"],
-        ["css=#email", "css:finder"],
-        ["xpath=//input[@id='email']", "xpath:attributes"],
-        ["xpath=//div[@id='modal-body']/div/form/div[2]/input", "xpath:idRelative"],
-        ["xpath=//div[2]/input", "xpath:position"]
-      ],
-      "value": ""
-    }, {
-      "id": "4ca69a32-ca45-4b4a-a703-199ca0a38cb1",
-      "comment": "",
-      "command": "executeScript",
-      "target": "document.getElementById('email').value='aaaaaaaa';",
-      "targets": [],
-      "value": ""
-    }, {
-      "id": "efd34c90-be27-4bc1-a237-70abf7ea702c",
-      "comment": "",
-      "command": "click",
-      "target": "css=.box-flex:nth-child(5) .bds-c-btn__idle-content__label > span",
-      "targets": [
-        ["css=.box-flex:nth-child(5) .bds-c-btn__idle-content__label > span", "css:finder"],
-        ["xpath=//div[@id='modal-body']/div/form/div[3]/div/button/span/span/span", "xpath:idRelative"],
-        ["xpath=//form/div[3]/div/button/span/span/span", "xpath:position"]
-      ],
-      "value": ""
-    }, {
-      "id": "5b877563-9dd0-44fa-b679-f972b9900d0f",
-      "comment": "",
-      "command": "mouseOut",
-      "target": "css=.box-flex:nth-child(5) .bds-c-btn__idle-content__label > span",
-      "targets": [
-        ["css=.box-flex:nth-child(5) .bds-c-btn__idle-content__label > span", "css:finder"],
-        ["xpath=//div[@id='modal-body']/div/form/div[3]/div/button/span/span/span", "xpath:idRelative"],
-        ["xpath=//form/div[3]/div/button/span/span/span", "xpath:position"]
+        ["css=#quantity-stepper-5998006 .bds-c-quantity-stepper__button--minus > path", "css:finder"]
       ],
       "value": ""
     }]
@@ -863,45 +681,6 @@
       "target": "css=#quantity-stepper-6756054-79255553 .fl-none",
       "targets": [
         ["css=#quantity-stepper-6756054-79255553 .fl-none", "css:finder"]
-      ],
-      "value": ""
-    }]
-  }, {
-    "id": "cc6da34e-3091-4379-a9b8-eba0bdc71803",
-    "name": "Checkout_Button_Click",
-    "commands": [{
-      "id": "3090d7c1-f8b3-41e4-a506-17f6406541c4",
-      "comment": "",
-      "command": "open",
-      "target": "/",
-      "targets": [],
-      "value": ""
-    }, {
-      "id": "aff2a475-b30d-4f40-b1e5-2e32c8e53dcf",
-      "comment": "",
-      "command": "setWindowSize",
-      "target": "998x816",
-      "targets": [],
-      "value": ""
-    }, {
-      "id": "ed22eccd-aeeb-4ec4-a1de-c20fd28227cc",
-      "comment": "",
-      "command": "click",
-      "target": "css=.multicart-mini-cart-count-badge",
-      "targets": [
-        ["css=.multicart-mini-cart-count-badge", "css:finder"],
-        ["xpath=//section[@id='global-navbar']/header/div[3]/div[2]/button/div", "xpath:idRelative"],
-        ["xpath=//button/div", "xpath:position"]
-      ],
-      "value": ""
-    }, {
-      "id": "10703eb3-2336-4785-af64-78ae3f8f25ae",
-      "comment": "",
-      "command": "click",
-      "target": "css=.bds-c-btn-cursor:nth-child(1) > .bds-c-btn-secondary .bds-c-btn__idle-content__label:nth-child(1) > span",
-      "targets": [
-        ["css=.bds-c-btn-cursor:nth-child(1) > .bds-c-btn-secondary .bds-c-btn__idle-content__label:nth-child(1) > span", "css:finder"],
-        ["xpath=//div[4]/div/button/span/span/span", "xpath:position"]
       ],
       "value": ""
     }]

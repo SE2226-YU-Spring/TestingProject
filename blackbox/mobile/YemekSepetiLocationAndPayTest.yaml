@@ -3,13 +3,14 @@ appId: com.inovel.app.yemeksepeti
 - launchApp
 
 
-# Senaryo 1:AdresTesti
-
+# Scenario 1:LocationTesting
+# Sellect already existing location
 - tapOn: Kazımdirik 367/2. Sk. 9/2, Bornova İzmir 35100, . Adresi Düzenle
 - tapOn: |-
     Evkaf Şirinkent Sk. 15
     Fatsa Ordu 52400
 - tapOn: Ev, Evkaf Şirinkent Sk. 15, . Adresi Düzenle
+# Create new location
 - tapOn: Yeni Adres Ekle
 - inputText: "Hatay"
 - tapOn:
@@ -20,13 +21,15 @@ appId: com.inovel.app.yemeksepeti
 - tapOn: Konumu Doğrula
 - tapOn: Semt
 - inputText: "RandomText"
+- doubleTapOn:
+    point: 4%,41%
 - tapOn: Kaydet
 - assertVisible: Randomtext, İzmir İzmir 35150, . Adresi Düzenle
 - tapOn: Randomtext, İzmir İzmir 35150, . Adresi Düzenle
 - tapOn: Kazımdirik 367/2. Sk. 9/2
 
 
-#senaryo 2 hazırlığı
+#Scenario 2 Preperation
 
 - tapOn:
     id: "HomeSearchBar" 
@@ -51,14 +54,16 @@ appId: com.inovel.app.yemeksepeti
 
 
 
-# Senaryo 2: Ödeme Yöntemlerine Giriş
+# Senaryo 2: Pay Test
 - scrollUntilVisible:
     element:
       text: Ödeme Yöntemi Seçiniz
+- tapOn: Ödeme Yöntemi Seçiniz
 
 - tapOn: Nakit
 - tapOn: Onayla
-- assertVisible: Adresinizi Doğrulayın
+- assertVisible: Siparişi oluştur
+
 - tapOn: Değiştir
 - tapOn: Online Kredi Kartı/Banka Kartı
 - assertVisible:
@@ -67,10 +72,8 @@ appId: com.inovel.app.yemeksepeti
 - tapOn: "@0"
 - tapOn: Kapıda Temassız Kartla Ödeme
 - tapOn: Onayla
-- assertVisible: Adresinizi Doğrulayın
-- tapOn: Priority option ,2 of 2 ,not selected ,Delivery time less than 20 minutes ,Additional price 24,99 TL ,Siparişiniz doğrudan ve öncelikli olarak size ulaştırılır. ,
-- tapOn: Öncelikli Teslimatı Seçin (+ 24,99 TL)
-- assertVisible: Adresinizi Doğrulayın
+- assertVisible: Siparişi oluştur
+
 
 
 

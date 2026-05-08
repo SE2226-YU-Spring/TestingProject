@@ -2,7 +2,7 @@ appId: com.inovel.app.yemeksepeti
 ---
 - launchApp
 
-# Senaryo 1: Geçerli Restoran Arama ve Detaya Gitme
+# Senaryo 1: Search Reastourant
 - tapOn:
     id: "HomeSearchBar"
 
@@ -17,18 +17,20 @@ appId: com.inovel.app.yemeksepeti
 
 - back
 
-# Senaryo 2: Kategori arama ve detaya
+# Senaryo 2: Search Category
 
 - tapOn:
     id: SEARCH_BAR_CLEAR_BUTTON
 
 - tapOn: Restoran veya işletme arayın
 - inputText: "lahmacun"
+- tapOn:
+    id: AUTOCOMPLETE_SUGGESTION_ENTRY
+
 - scrollUntilVisible:
     element:
       text: Lahmacun
 - tapOn:
     id: IMAGE
 - assertVisible: Menüde ara
-# Senaryo 3: listenin sonuna elle 20 dk da iniliyo ve sonunda
-# sonuna geldiğini belitren birşey yok o yüzden test de yok
+
